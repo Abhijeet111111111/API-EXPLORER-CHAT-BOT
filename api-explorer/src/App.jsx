@@ -23,6 +23,7 @@ const API =
   window.location.hostname === "localhost"
     ? "http://localhost:5000"
     : "https://api-explorer-chat-bot.onrender.com";
+    console.log(API)
 
 const APIExplorer = () => {
   const [messages, setMessages] = useState([]);
