@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { GoogleGenAI } from "@google/genai";
+import { Groq } from "groq-sdk/client.js";
+import CloudFlare from "cloudflare";
 import {
   Send,
   Bookmark,
@@ -9,6 +11,11 @@ import {
   Zap,
   Filter,
   X,
+  Plus,
+  Trash2,
+  Download,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { data } from "autoprefixer";
 
@@ -25,8 +32,27 @@ const APIExplorer = () => {
     }
   });
   const [showSidebar, setShowSidebar] = useState(false);
+  const [showFiltersPanel, setShowFiltersPanel] = useState(true);
+  const [showChatSidebar, setShowChatSidebar] = useState(true);
   const [copiedSnippet, setCopiedSnippet] = useState(null);
   const [selectedLanguage, setSelectedLanguage] = useState("javascript");
+  const [selectedLLM, setSelectedLLM] = useState("gemini");
+  const [llmStatus, setLlmStatus] = useState(null);
+  const [chatHistory, setChatHistory] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("chatHistory") || "[]");
+    } catch {
+      return [];
+    }
+  });
+  const [currentChatId, setCurrentChatId] = useState(() => {
+    try {
+      const savedId = localStorage.getItem("currentChatId");
+      return savedId || null;
+    } catch {
+      return null;
+    }
+  });
   const [filters, setFilters] = useState({
     category: "All",
     techStack: "All",
@@ -36,10 +62,29 @@ const APIExplorer = () => {
     protocol: "All",
   });
   const messagesEndRef = useRef(null);
+  console.log(messages);
+
+  const llmOptions = [
+    { id: "gemini", name: "Google Gemini", icon: "🤖" },
+    { id: "groq", name: "Groq", icon: "⚡" },
+    { id: "cloudflare", name: "Cloudflare", icon: "☁️" },
+  ];
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
+
+  // Load chat when current chat ID changes
+  useEffect(() => {
+    if (currentChatId) {
+      const chat = chatHistory.find((c) => c.id === currentChatId);
+      if (chat) {
+        setMessages(chat.messages);
+      }
+    } else {
+      setMessages([]);
+    }
+  }, [currentChatId, chatHistory]);
 
   useEffect(() => {
     scrollToBottom();
@@ -53,6 +98,74 @@ const APIExplorer = () => {
     localStorage.setItem("theme", theme);
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
+
+  // Save chat history whenever messages change
+  useEffect(() => {
+    if (currentChatId && messages.length > 0) {
+      const updatedHistory = chatHistory.map((chat) => {
+        if (chat.id === currentChatId) {
+          return {
+            ...chat,
+            messages: messages,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return chat;
+      });
+      setChatHistory(updatedHistory);
+      localStorage.setItem("chatHistory", JSON.stringify(updatedHistory));
+    }
+  }, [messages]);
+
+  // Save current chat ID
+  useEffect(() => {
+    localStorage.setItem("currentChatId", currentChatId || "");
+  }, [currentChatId]);
+
+  const createNewChat = () => {
+    const newChatId = Date.now().toString();
+    const newChat = {
+      id: newChatId,
+      title: "New Chat",
+      messages: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    setChatHistory((prev) => [newChat, ...prev]);
+    setCurrentChatId(newChatId);
+    setMessages([]);
+  };
+
+  const deleteChat = (chatId) => {
+    const updatedHistory = chatHistory.filter((chat) => chat.id !== chatId);
+    setChatHistory(updatedHistory);
+    localStorage.setItem("chatHistory", JSON.stringify(updatedHistory));
+
+    if (currentChatId === chatId) {
+      if (updatedHistory.length > 0) {
+        setCurrentChatId(updatedHistory[0].id);
+      } else {
+        setCurrentChatId(null);
+        setMessages([]);
+      }
+    }
+  };
+
+  const loadChat = (chatId) => {
+    setCurrentChatId(chatId);
+    setShowChatSidebar(false);
+  };
+
+  const updateChatTitle = (chatId, newTitle) => {
+    const updatedHistory = chatHistory.map((chat) => {
+      if (chat.id === chatId) {
+        return { ...chat, title: newTitle };
+      }
+      return chat;
+    });
+    setChatHistory(updatedHistory);
+    localStorage.setItem("chatHistory", JSON.stringify(updatedHistory));
+  };
 
   const quickSuggestions = [
     {
@@ -117,45 +230,113 @@ const APIExplorer = () => {
     return prompt;
   };
 
-  const callGeminiAPI = async (userQuery) => {
-    // const apiKey = prompt("Please enter your Google Gemini API key:", "");
-    // if (!apiKey) return null;
-    const apiKey = import.meta.env.GEMINI_API_KEY;
-
-    console.log("API Key loaded:", apiKey ? "Yes ✓" : "No ✗");
-    console.log("Environment variables:", import.meta.env);
-    const ai = new GoogleGenAI({
-      apiKey: import.meta.env.GEMINI_API_KEY,
+  const callCloudFlareApi = async (userQuery) => {
+    const res = await fetch("http://localhost:5000/api/ai/cloudFlare", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [{ role: "user", content: buildPrompt(userQuery) }],
+      }),
     });
-    console.log(import.meta);
+
+    const data = await res.json();
+    let recommendations = [];
     try {
-      const result = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: buildPrompt(userQuery),
-      });
-      const responseText = result.text;
+      const parsed = JSON.parse(data.result.response);
+      recommendations = parsed.recommendations;
+    } catch (err) {
+      console.error("Parsing failed:", err);
+      throw new Error("Failed to parse CloudFlare response");
+    }
 
-      if (!responseText) throw new Error("No response from API");
-      const data = JSON.parse(responseText);
-      console.log(data);
+    return { recommendations };
+  };
 
-      return JSON.parse(responseText);
+  const callGroqApi = async (userQuery) => {
+    const res = await fetch("http://localhost:5000/api/ai/groq", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [{ role: "user", content: buildPrompt(userQuery) }],
+      }),
+    })
+    const chatCompletion = await res.json();
+    const recommendation = JSON.parse(chatCompletion.choices[0].message.content);
+    return recommendation;
+  };
+
+  const callGeminiAPI = async (userQuery) => {
+    try{
+     const res = await fetch("http://localhost:5000/api/ai/googleGemini", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: buildPrompt(userQuery)
+      }),
+    })
+
+    const data = await res.json();
+    const result = JSON.parse(data);
+    return result
+      
     } catch (error) {
       console.error("Gemini API Error:", error);
       throw error;
     }
   };
 
+  const callLLMWithFallback = async (userQuery) => {
+    const llmPriority = {
+      gemini: callGeminiAPI,
+      groq: callGroqApi,
+      cloudflare: callCloudFlareApi,
+    };
+
+    // Create priority order with selected LLM first
+    const priorityOrder = [selectedLLM];
+    Object.keys(llmPriority).forEach((key) => {
+      if (key !== selectedLLM) {
+        priorityOrder.push(key);
+      }
+    });
+
+    let lastError = null;
+    for (const llmId of priorityOrder) {
+      try {
+        setLlmStatus(`Calling ${llmOptions.find(l => l.id === llmId)?.name}...`);
+        const result = await llmPriority[llmId](userQuery);
+        setLlmStatus(`✓ ${llmOptions.find(l => l.id === llmId)?.name}`);
+        return result;
+      } catch (error) {
+        console.error(`${llmId} API failed:`, error);
+        lastError = error;
+        setLlmStatus(`✗ ${llmOptions.find(l => l.id === llmId)?.name} failed, trying next...`);
+        continue;
+      }
+    }
+
+    throw new Error(
+      `All LLM APIs failed. Last error: ${lastError?.message || "Unknown error"}`
+    );
+  };
+
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
 
+    // Create new chat if no current chat exists
+    if (!currentChatId) {
+      createNewChat();
+    }
+
     const userMessage = { type: "user", content: inputValue };
+    const userInput = inputValue;
     setMessages((prev) => [...prev, userMessage]);
     setInputValue("");
     setLoading(true);
+    setLlmStatus(null);
 
     try {
-      const result = await callGeminiAPI(inputValue);
+      const result = await callLLMWithFallback(userInput);
 
       const botMessage = {
         type: "bot",
@@ -163,6 +344,13 @@ const APIExplorer = () => {
         feedback: null,
       };
       setMessages((prev) => [...prev, botMessage]);
+
+      // Update chat title based on first user query
+      if (messages.length === 0) {
+        const preview =
+          userInput.substring(0, 30) + (userInput.length > 30 ? "..." : "");
+        updateChatTitle(currentChatId, preview);
+      }
     } catch (error) {
       const errorMessage = {
         type: "error",
@@ -171,6 +359,7 @@ const APIExplorer = () => {
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setLoading(false);
+      setTimeout(() => setLlmStatus(null), 2000);
     }
   };
 
@@ -208,6 +397,195 @@ const APIExplorer = () => {
       Hard: "bg-rose-500/20 text-rose-400 border-rose-500/30",
     };
     return colors[level] || colors["Medium"];
+  };
+
+  const downloadChatAsJSON = () => {
+    if (!currentChatId) return;
+
+    const chat = chatHistory.find((c) => c.id === currentChatId);
+    if (!chat) return;
+
+    const dataToDownload = {
+      title: chat.title,
+      createdAt: chat.createdAt,
+      updatedAt: chat.updatedAt,
+      messages: chat.messages,
+    };
+
+    const jsonString = JSON.stringify(dataToDownload, null, 2);
+    const blob = new Blob([jsonString], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${chat.title || "chat"}_${Date.now()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadChatAsCSV = () => {
+    if (!currentChatId) return;
+
+    const chat = chatHistory.find((c) => c.id === currentChatId);
+    if (!chat) return;
+
+    let csvContent = "data:text/csv;charset=utf-8,";
+    csvContent += "Type,Content,Timestamp\n";
+
+    chat.messages.forEach((msg) => {
+      const type = msg.type;
+      let content = "";
+
+      if (type === "user") {
+        content = `"${msg.content.replace(/"/g, '""')}"`;
+      } else if (type === "bot" && Array.isArray(msg.content)) {
+        const apis = msg.content
+          .map(
+            (api) =>
+              `${api.api_name}: ${api.short_description}`
+          )
+          .join(" | ");
+        content = `"${apis.replace(/"/g, '""')}"`;
+      } else if (type === "error") {
+        content = `"${msg.content.replace(/"/g, '""')}"`;
+      }
+
+      csvContent += `${type},${content},${new Date().toISOString()}\n`;
+    });
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `${chat.title || "chat"}_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const downloadChatAsHTML = () => {
+    if (!currentChatId) return;
+
+    const chat = chatHistory.find((c) => c.id === currentChatId);
+    if (!chat) return;
+
+    let htmlContent = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${chat.title}</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #0f172a;
+            color: #f1f5f9;
+        }
+        .header {
+            border-bottom: 2px solid #334155;
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+        }
+        .header h1 {
+            margin: 0;
+            color: #06b6d4;
+        }
+        .header p {
+            margin: 5px 0 0 0;
+            color: #cbd5e1;
+            font-size: 0.9em;
+        }
+        .message {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #06b6d4;
+        }
+        .message.user {
+            background-color: #1e3a5f;
+            border-left-color: #06b6d4;
+            margin-left: 20%;
+        }
+        .message.bot {
+            background-color: #1e293b;
+            border-left-color: #10b981;
+        }
+        .api-card {
+            margin: 10px 0;
+            padding: 12px;
+            background-color: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 6px;
+        }
+        .api-name {
+            color: #06b6d4;
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+        .api-description {
+            color: #cbd5e1;
+            font-size: 0.9em;
+            margin: 5px 0;
+        }
+        .api-feature {
+            color: #10b981;
+            font-size: 0.85em;
+            margin: 3px 0;
+        }
+        .message.error {
+            background-color: #5f1f1f;
+            border-left-color: #f43f5e;
+            color: #fca5a5;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>${chat.title}</h1>
+        <p>Created: ${new Date(chat.createdAt).toLocaleString()}</p>
+        <p>Last Updated: ${new Date(chat.updatedAt).toLocaleString()}</p>
+    </div>
+`;
+
+    chat.messages.forEach((msg) => {
+      if (msg.type === "user") {
+        htmlContent += `<div class="message user"><strong>You:</strong> ${msg.content}</div>`;
+      } else if (msg.type === "bot" && Array.isArray(msg.content)) {
+        htmlContent += `<div class="message bot"><strong>Recommendations:</strong>`;
+        msg.content.forEach((api) => {
+          htmlContent += `
+            <div class="api-card">
+                <div class="api-name">${api.api_name}</div>
+                <div class="api-description">${api.short_description}</div>
+                ${api.key_features.map((f) => `<div class="api-feature">✓ ${f}</div>`).join("")}
+                <div class="api-description"><strong>Pricing:</strong> ${api.pricing}</div>
+                <div class="api-description"><strong>Difficulty:</strong> ${api.difficulty.level}</div>
+            </div>`;
+        });
+        htmlContent += `</div>`;
+      } else if (msg.type === "error") {
+        htmlContent += `<div class="message error"><strong>Error:</strong> ${msg.content}</div>`;
+      }
+    });
+
+    htmlContent += `
+</body>
+</html>
+`;
+
+    const blob = new Blob([htmlContent], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${chat.title || "chat"}_${Date.now()}.html`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -286,6 +664,12 @@ const APIExplorer = () => {
       >
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowChatSidebar(!showChatSidebar)}
+              className={`p-2 rounded-lg transition-colors md:hidden ${theme === "dark" ? "bg-slate-800 hover:bg-slate-700" : "bg-slate-200 hover:bg-slate-300"}`}
+            >
+              ☰
+            </button>
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-emerald-500 flex items-center justify-center">
               <Zap className="w-5 h-5 text-white" />
             </div>
@@ -293,6 +677,38 @@ const APIExplorer = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* LLM Selector */}
+            <select
+              value={selectedLLM}
+              onChange={(e) => setSelectedLLM(e.target.value)}
+              disabled={loading}
+              className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                theme === "dark"
+                  ? "bg-slate-800 border-slate-700 hover:bg-slate-700"
+                  : "bg-slate-200 border-slate-300"
+              } border cursor-pointer disabled:opacity-50`}
+              title="Select LLM - will fallback to others if primary fails"
+            >
+              {llmOptions.map((llm) => (
+                <option key={llm.id} value={llm.id}>
+                  {llm.icon} {llm.name}
+                </option>
+              ))}
+            </select>
+
+            {/* LLM Status */}
+            {llmStatus && (
+              <div
+                className={`text-xs px-2 py-1 rounded ${
+                  llmStatus.includes("✗")
+                    ? "bg-rose-500/20 text-rose-400"
+                    : "bg-emerald-500/20 text-emerald-400"
+                }`}
+              >
+                {llmStatus}
+              </div>
+            )}
+
             <button
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
               className={`px-3 py-2 rounded-lg transition-colors ${theme === "dark" ? "bg-slate-800 hover:bg-slate-700" : "bg-slate-200 hover:bg-slate-300"}`}
@@ -305,160 +721,292 @@ const APIExplorer = () => {
             >
               ⭐ {savedAPIs.length}
             </button>
-          </div>
-        </div>
-      </header>
 
-      <div className="flex gap-6 max-w-7xl mx-auto h-[calc(100vh-64px)]">
-        {/* Filters Sidebar */}
-        <div
-          className={`w-80 border-r ${theme === "dark" ? "bg-slate-900/50 border-slate-800" : "bg-slate-50 border-slate-200"} p-6 overflow-y-auto transition-all ${showSidebar ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
-        >
-          <div className="space-y-6">
-            <div>
-              <h3 className="text-sm font-semibold mb-3 text-cyan-400 uppercase tracking-widest">
-                Filters
-              </h3>
-              <div className="space-y-3">
-                {/* Category */}
-                <div>
-                  <label className="text-xs font-semibold mb-2 block opacity-70">
-                    Category
-                  </label>
-                  <select
-                    value={filters.category}
-                    onChange={(e) =>
-                      setFilters({ ...filters, category: e.target.value })
-                    }
-                    className={`w-full px-3 py-2 rounded-lg text-sm transition-colors ${theme === "dark" ? "bg-slate-800 border-slate-700 hover:bg-slate-700" : "bg-white border-slate-300"} border`}
+            {/* Download Button */}
+            {currentChatId && messages.length > 0 && (
+              <div className="relative group">
+                <button
+                  className={`px-3 py-2 rounded-lg transition-colors ${theme === "dark" ? "bg-slate-800 hover:bg-slate-700" : "bg-slate-200 hover:bg-slate-300"}`}
+                  title="Download chat"
+                >
+                  <Download className="w-5 h-5" />
+                </button>
+                <div
+                  className={`absolute right-0 mt-2 w-48 rounded-lg shadow-lg hidden group-hover:block z-50 ${theme === "dark" ? "bg-slate-800 border border-slate-700" : "bg-white border border-slate-300"}`}
+                >
+                  <button
+                    onClick={downloadChatAsJSON}
+                    className={`w-full text-left px-4 py-2 hover:bg-cyan-600 transition-colors rounded-t-lg text-sm`}
                   >
-                    {[
-                      "All",
-                      "Payments",
-                      "Messaging",
-                      "Authentication",
-                      "AI/ML",
-                      "Maps",
-                      "Storage",
-                      "Analytics",
-                      "CMS",
-                      "Hosting",
-                    ].map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Tech Stack */}
-                <div>
-                  <label className="text-xs font-semibold mb-2 block opacity-70">
-                    Tech Stack
-                  </label>
-                  <select
-                    value={filters.techStack}
-                    onChange={(e) =>
-                      setFilters({ ...filters, techStack: e.target.value })
-                    }
-                    className={`w-full px-3 py-2 rounded-lg text-sm transition-colors ${theme === "dark" ? "bg-slate-800 border-slate-700 hover:bg-slate-700" : "bg-white border-slate-300"} border`}
+                    📄 Download as JSON
+                  </button>
+                  <button
+                    onClick={downloadChatAsCSV}
+                    className={`w-full text-left px-4 py-2 hover:bg-cyan-600 transition-colors text-sm`}
                   >
-                    {[
-                      "All",
-                      "Node.js",
-                      "Python",
-                      "Java",
-                      "Go",
-                      "Rust",
-                      "PHP",
-                      "Ruby",
-                      "React",
-                    ].map((stack) => (
-                      <option key={stack} value={stack}>
-                        {stack}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Protocol */}
-                <div>
-                  <label className="text-xs font-semibold mb-2 block opacity-70">
-                    Protocol
-                  </label>
-                  <select
-                    value={filters.protocol}
-                    onChange={(e) =>
-                      setFilters({ ...filters, protocol: e.target.value })
-                    }
-                    className={`w-full px-3 py-2 rounded-lg text-sm transition-colors ${theme === "dark" ? "bg-slate-800 border-slate-700 hover:bg-slate-700" : "bg-white border-slate-300"} border`}
+                    📊 Download as CSV
+                  </button>
+                  <button
+                    onClick={downloadChatAsHTML}
+                    className={`w-full text-left px-4 py-2 hover:bg-cyan-600 transition-colors rounded-b-lg text-sm`}
                   >
-                    {["All", "REST", "GraphQL", "gRPC", "WebSocket"].map(
-                      (proto) => (
-                        <option key={proto} value={proto}>
-                          {proto}
-                        </option>
-                      ),
-                    )}
-                  </select>
-                </div>
-
-                {/* Checkboxes */}
-                <div className="space-y-2 pt-2">
-                  {[
-                    { key: "freeOnly", label: "💰 Free tier only" },
-                    { key: "indianOnly", label: "🇮🇳 Indian APIs" },
-                    { key: "openSourceOnly", label: "🔓 Open-source only" },
-                  ].map(({ key, label }) => (
-                    <label
-                      key={key}
-                      className="flex items-center gap-2 cursor-pointer text-sm hover:opacity-80 transition-opacity"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={filters[key]}
-                        onChange={(e) =>
-                          setFilters({ ...filters, [key]: e.target.checked })
-                        }
-                        className="w-4 h-4 rounded"
-                      />
-                      {label}
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Saved APIs Section */}
-            {savedAPIs.length > 0 && (
-              <div
-                className={`border-t ${theme === "dark" ? "border-slate-800" : "border-slate-200"} pt-6`}
-              >
-                <h3 className="text-sm font-semibold mb-3 text-emerald-400 uppercase tracking-widest">
-                  Saved APIs
-                </h3>
-                <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {savedAPIs.map((api) => (
-                    <div
-                      key={api.api_name}
-                      className={`p-3 rounded-lg text-xs cursor-pointer transition-all hover:scale-105 ${theme === "dark" ? "bg-slate-800 hover:bg-slate-700" : "bg-white hover:bg-slate-100"} border ${theme === "dark" ? "border-slate-700" : "border-slate-300"}`}
-                      onClick={() => {
-                        setInputValue(`Tell me more about ${api.api_name}`);
-                      }}
-                    >
-                      <p className="font-semibold text-emerald-400">
-                        {api.api_name}
-                      </p>
-                      <p className="text-xs opacity-60 mt-1 line-clamp-2">
-                        {api.short_description}
-                      </p>
-                    </div>
-                  ))}
+                    🌐 Download as HTML
+                  </button>
                 </div>
               </div>
             )}
           </div>
         </div>
+      </header>
+
+      <div className="flex gap-0 max-w-7xl mx-auto h-[calc(100vh-64px)]">
+        {/* Chat History Sidebar - Collapsible */}
+        <div
+          className={`transition-all duration-300 overflow-hidden ${
+            showChatSidebar ? "w-64" : "w-0"
+          } border-r ${theme === "dark" ? "bg-slate-900/50 border-slate-800" : "bg-slate-50 border-slate-200"}`}
+        >
+          <div className="w-64 h-full p-4 overflow-y-auto">
+            <button
+              onClick={createNewChat}
+              className={`w-full flex items-center justify-center gap-2 p-3 rounded-lg font-semibold mb-4 transition-all ${theme === "dark" ? "bg-cyan-600 hover:bg-cyan-700 text-white" : "bg-cyan-500 hover:bg-cyan-600 text-white"}`}
+            >
+              <Plus className="w-5 h-5" />
+              New Chat
+            </button>
+
+            <div className="space-y-2">
+              <h3 className="text-xs font-semibold mb-3 text-cyan-400 uppercase tracking-widest">
+                Chat History
+              </h3>
+              {chatHistory.length === 0 ? (
+                <p
+                  className={`text-xs ${theme === "dark" ? "text-slate-500" : "text-slate-400"}`}
+                >
+                  No chats yet. Start a new conversation!
+                </p>
+              ) : (
+                chatHistory.map((chat) => (
+                  <div
+                    key={chat.id}
+                    className={`group p-3 rounded-lg cursor-pointer transition-all ${
+                      currentChatId === chat.id
+                        ? theme === "dark"
+                          ? "bg-slate-700 border border-cyan-500/50"
+                          : "bg-slate-200 border border-cyan-400"
+                        : theme === "dark"
+                          ? "hover:bg-slate-800 border border-transparent"
+                          : "hover:bg-slate-100 border border-transparent"
+                    }`}
+                    onClick={() => loadChat(chat.id)}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">
+                          {chat.title}
+                        </p>
+                        <p
+                          className={`text-xs mt-1 ${theme === "dark" ? "text-slate-500" : "text-slate-400"}`}
+                        >
+                          {new Date(chat.updatedAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteChat(chat.id);
+                        }}
+                        className={`opacity-0 group-hover:opacity-100 p-1 rounded transition-all ${theme === "dark" ? "hover:bg-slate-700 text-slate-400" : "hover:bg-slate-300 text-slate-500"}`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Chat Sidebar Toggle Button */}
+        <button
+          onClick={() => setShowChatSidebar(!showChatSidebar)}
+          className={`hidden md:flex items-center justify-center w-12 border-r ${theme === "dark" ? "bg-slate-900/50 border-slate-800 hover:bg-slate-800" : "bg-slate-50 border-slate-200 hover:bg-slate-100"} transition-colors`}
+          title={showChatSidebar ? "Hide chat history" : "Show chat history"}
+        >
+          {showChatSidebar ? (
+            <ChevronLeft className="w-5 h-5" />
+          ) : (
+            <ChevronRight className="w-5 h-5" />
+          )}
+        </button>
+
+        {/* Filters Sidebar - Collapsible */}
+        <div
+          className={`transition-all duration-300 overflow-hidden ${
+            showFiltersPanel ? "w-80" : "w-0"
+          } border-r ${theme === "dark" ? "bg-slate-900/50 border-slate-800" : "bg-slate-50 border-slate-200"}`}
+        >
+          <div className="w-80 h-full p-6 overflow-y-auto">
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-sm font-semibold mb-3 text-cyan-400 uppercase tracking-widest">
+                  Filters
+                </h3>
+                <div className="space-y-3">
+                  {/* Category */}
+                  <div>
+                    <label className="text-xs font-semibold mb-2 block opacity-70">
+                      Category
+                    </label>
+                    <select
+                      value={filters.category}
+                      onChange={(e) =>
+                        setFilters({ ...filters, category: e.target.value })
+                      }
+                      className={`w-full px-3 py-2 rounded-lg text-sm transition-colors ${theme === "dark" ? "bg-slate-800 border-slate-700 hover:bg-slate-700" : "bg-white border-slate-300"} border`}
+                    >
+                      {[
+                        "All",
+                        "Payments",
+                        "Messaging",
+                        "Authentication",
+                        "AI/ML",
+                        "Maps",
+                        "Storage",
+                        "Analytics",
+                        "CMS",
+                        "Hosting",
+                      ].map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Tech Stack */}
+                  <div>
+                    <label className="text-xs font-semibold mb-2 block opacity-70">
+                      Tech Stack
+                    </label>
+                    <select
+                      value={filters.techStack}
+                      onChange={(e) =>
+                        setFilters({ ...filters, techStack: e.target.value })
+                      }
+                      className={`w-full px-3 py-2 rounded-lg text-sm transition-colors ${theme === "dark" ? "bg-slate-800 border-slate-700 hover:bg-slate-700" : "bg-white border-slate-300"} border`}
+                    >
+                      {[
+                        "All",
+                        "Node.js",
+                        "Python",
+                        "Java",
+                        "Go",
+                        "Rust",
+                        "PHP",
+                        "Ruby",
+                        "React",
+                      ].map((stack) => (
+                        <option key={stack} value={stack}>
+                          {stack}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Protocol */}
+                  <div>
+                    <label className="text-xs font-semibold mb-2 block opacity-70">
+                      Protocol
+                    </label>
+                    <select
+                      value={filters.protocol}
+                      onChange={(e) =>
+                        setFilters({ ...filters, protocol: e.target.value })
+                      }
+                      className={`w-full px-3 py-2 rounded-lg text-sm transition-colors ${theme === "dark" ? "bg-slate-800 border-slate-700 hover:bg-slate-700" : "bg-white border-slate-300"} border`}
+                    >
+                      {["All", "REST", "GraphQL", "gRPC", "WebSocket"].map(
+                        (proto) => (
+                          <option key={proto} value={proto}>
+                            {proto}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </div>
+
+                  {/* Checkboxes */}
+                  <div className="space-y-2 pt-2">
+                    {[
+                      { key: "freeOnly", label: "💰 Free tier only" },
+                      { key: "indianOnly", label: "🇮🇳 Indian APIs" },
+                      { key: "openSourceOnly", label: "🔓 Open-source only" },
+                    ].map(({ key, label }) => (
+                      <label
+                        key={key}
+                        className="flex items-center gap-2 cursor-pointer text-sm hover:opacity-80 transition-opacity"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={filters[key]}
+                          onChange={(e) =>
+                            setFilters({ ...filters, [key]: e.target.checked })
+                          }
+                          className="w-4 h-4 rounded"
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Saved APIs Section */}
+              {savedAPIs.length > 0 && (
+                <div
+                  className={`border-t ${theme === "dark" ? "border-slate-800" : "border-slate-200"} pt-6`}
+                >
+                  <h3 className="text-sm font-semibold mb-3 text-emerald-400 uppercase tracking-widest">
+                    Saved APIs
+                  </h3>
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {savedAPIs.map((api) => (
+                      <div
+                        key={api.api_name}
+                        className={`p-3 rounded-lg text-xs cursor-pointer transition-all hover:scale-105 ${theme === "dark" ? "bg-slate-800 hover:bg-slate-700" : "bg-white hover:bg-slate-100"} border ${theme === "dark" ? "border-slate-700" : "border-slate-300"}`}
+                        onClick={() => {
+                          setInputValue(`Tell me more about ${api.api_name}`);
+                        }}
+                      >
+                        <p className="font-semibold text-emerald-400">
+                          {api.api_name}
+                        </p>
+                        <p className="text-xs opacity-60 mt-1 line-clamp-2">
+                          {api.short_description}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Filters Panel Toggle Button */}
+        <button
+          onClick={() => setShowFiltersPanel(!showFiltersPanel)}
+          className={`hidden lg:flex items-center justify-center w-12 border-r ${theme === "dark" ? "bg-slate-900/50 border-slate-800 hover:bg-slate-800" : "bg-slate-50 border-slate-200 hover:bg-slate-100"} transition-colors`}
+          title={showFiltersPanel ? "Hide filters" : "Show filters"}
+        >
+          {showFiltersPanel ? (
+            <ChevronLeft className="w-5 h-5" />
+          ) : (
+            <ChevronRight className="w-5 h-5" />
+          )}
+        </button>
 
         {/* Main Chat Area */}
         <div className="flex-1 flex flex-col">
