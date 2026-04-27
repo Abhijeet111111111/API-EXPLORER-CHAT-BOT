@@ -22,7 +22,7 @@ import { data } from "autoprefixer";
 const API =
   window.location.hostname === "localhost"
     ? "http://localhost:5000"
-    : "https://API-EXPLORER-CHAT-BOT.onrender.com";
+    : "https://api-explorer-chat-bot.onrender.com";
 
 const APIExplorer = () => {
   const [messages, setMessages] = useState([]);
