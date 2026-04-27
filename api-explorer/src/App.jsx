@@ -19,6 +19,11 @@ import {
 } from "lucide-react";
 import { data } from "autoprefixer";
 
+const API =
+  window.location.hostname === "localhost"
+    ? "http://localhost:5000"
+    : "https://API-EXPLORER-CHAT-BOT.onrender.com";
+
 const APIExplorer = () => {
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState("");
@@ -231,7 +236,7 @@ const APIExplorer = () => {
   };
 
   const callCloudFlareApi = async (userQuery) => {
-    const res = await fetch("http://localhost:5000/api/ai/cloudFlare", {
+    const res = await fetch(`${API}/api/ai/cloudFlare`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -253,7 +258,7 @@ const APIExplorer = () => {
   };
 
   const callGroqApi = async (userQuery) => {
-    const res = await fetch("http://localhost:5000/api/ai/groq", {
+    const res = await fetch(`${API}/api/ai/groq`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -267,7 +272,7 @@ const APIExplorer = () => {
 
   const callGeminiAPI = async (userQuery) => {
     try{
-     const res = await fetch("http://localhost:5000/api/ai/googleGemini", {
+     const res = await fetch(`${API}/api/ai/googleGemini`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
