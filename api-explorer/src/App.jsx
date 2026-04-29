@@ -23,7 +23,7 @@ const API =
   window.location.hostname === "localhost"
     ? "http://localhost:5000"
     : "https://api-explorer-chat-bot.onrender.com";
-    console.log(API)
+console.log(API);
 
 const APIExplorer = () => {
   const [messages, setMessages] = useState([]);
@@ -265,26 +265,27 @@ const APIExplorer = () => {
       body: JSON.stringify({
         messages: [{ role: "user", content: buildPrompt(userQuery) }],
       }),
-    })
+    });
     const chatCompletion = await res.json();
-    const recommendation = JSON.parse(chatCompletion.choices[0].message.content);
+    const recommendation = JSON.parse(
+      chatCompletion.choices[0].message.content,
+    );
     return recommendation;
   };
 
   const callGeminiAPI = async (userQuery) => {
-    try{
-     const res = await fetch(`${API}/api/ai/googleGemini`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: buildPrompt(userQuery)
-      }),
-    })
+    try {
+      const res = await fetch(`${API}/api/ai/googleGemini`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: buildPrompt(userQuery),
+        }),
+      });
 
-    const data = await res.json();
-    const result = JSON.parse(data);
-    return result
-      
+      const data = await res.json();
+      const result = JSON.parse(data);
+      return result;
     } catch (error) {
       console.error("Gemini API Error:", error);
       throw error;
@@ -292,7 +293,7 @@ const APIExplorer = () => {
   };
 
   const buildValidationPrompt = (userQuery) => {
-  return `Classify the following query:
+    return `Classify the following query:
 
 "${userQuery}"
 
@@ -302,90 +303,94 @@ Respond ONLY in JSON:
 {
   "is_api_related": true/false
 }`;
-};
+  };
 
-const validateWithGemini = async (userQuery) => {
-  try {
-    const res = await fetch(`${API}/api/ai/googleGemini`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: buildValidationPrompt(userQuery),
-      }),
-    });
-      const data = await res.json();
-     const parsed =
-      typeof data === "string"
-        ? JSON.parse(data)
-        : typeof data.result === "string"
-        ? JSON.parse(data.result)
-        : data;
-
-    return parsed;
-  } catch (err) {
-    console.error("Gemini validation failed:", err);
-    throw err;
-  }
-};
-
-const validateWithGroq = async (userQuery) => {
-  try {
-    const res = await fetch(`${API}/api/ai/groq`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [{ role: "user", content: buildValidationPrompt(userQuery) }],
-      }),
-    });
-
-    const data = await res.json();
-    return JSON.parse(data.choices[0].message.content);
-  } catch (err) {
-    console.error("Groq validation failed:", err);
-    throw err;
-  }
-};
-
-const validateWithCloudflare = async (userQuery) => {
-  try {
-    const res = await fetch(`${API}/api/ai/cloudFlare`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [{ role: "user", content: buildValidationPrompt(userQuery) }],
-      }),
-    });
-
-    const data = await res.json();
-    return JSON.parse(data.result.response);
-  } catch (err) {
-    console.error("Cloudflare validation failed:", err);
-    throw err;
-  }
-};
-
-const validateQueryWithFallback = async (userQuery) => {
-  const validators = [
-    validateWithGemini,
-    validateWithGroq,
-    validateWithCloudflare,
-  ];
-
-  for (const validator of validators) {
+  const validateWithGemini = async (userQuery) => {
     try {
-      setLlmStatus("Validating query...");
-      const result = await validator(userQuery);
+      const res = await fetch(`${API}/api/ai/googleGemini`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: buildValidationPrompt(userQuery),
+        }),
+      });
+      const data = await res.json();
+      const parsed =
+        typeof data === "string"
+          ? JSON.parse(data)
+          : typeof data.result === "string"
+            ? JSON.parse(data.result)
+            : data;
 
-      if (typeof result.is_api_related === "boolean") {
-        return result.is_api_related;
-      }
+      return parsed;
     } catch (err) {
-      continue;
+      console.error("Gemini validation failed:", err);
+      throw err;
     }
-  }
+  };
 
-  return true; // fallback if all fail
-};
+  const validateWithGroq = async (userQuery) => {
+    try {
+      const res = await fetch(`${API}/api/ai/groq`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [
+            { role: "user", content: buildValidationPrompt(userQuery) },
+          ],
+        }),
+      });
+
+      const data = await res.json();
+      return JSON.parse(data.choices[0].message.content);
+    } catch (err) {
+      console.error("Groq validation failed:", err);
+      throw err;
+    }
+  };
+
+  const validateWithCloudflare = async (userQuery) => {
+    try {
+      const res = await fetch(`${API}/api/ai/cloudFlare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [
+            { role: "user", content: buildValidationPrompt(userQuery) },
+          ],
+        }),
+      });
+
+      const data = await res.json();
+      return JSON.parse(data.result.response);
+    } catch (err) {
+      console.error("Cloudflare validation failed:", err);
+      throw err;
+    }
+  };
+
+  const validateQueryWithFallback = async (userQuery) => {
+    const validators = [
+      validateWithGroq,
+      validateWithCloudflare,
+      validateWithGemini,
+    ];
+
+    for (const validator of validators) {
+      try {
+        setLlmStatus("Validating query...");
+        const result = await validator(userQuery);
+
+        if (typeof result.is_api_related === "boolean") {
+          return result.is_api_related;
+        }
+      } catch (err) {
+        continue;
+      }
+    }
+
+    return true; // fallback if all fail
+  };
 
   const callLLMWithFallback = async (userQuery) => {
     const llmPriority = {
@@ -405,20 +410,24 @@ const validateQueryWithFallback = async (userQuery) => {
     let lastError = null;
     for (const llmId of priorityOrder) {
       try {
-        setLlmStatus(`Calling ${llmOptions.find(l => l.id === llmId)?.name}...`);
+        setLlmStatus(
+          `Calling ${llmOptions.find((l) => l.id === llmId)?.name}...`,
+        );
         const result = await llmPriority[llmId](userQuery);
-        setLlmStatus(`✓ ${llmOptions.find(l => l.id === llmId)?.name}`);
+        setLlmStatus(`✓ ${llmOptions.find((l) => l.id === llmId)?.name}`);
         return result;
       } catch (error) {
         console.error(`${llmId} API failed:`, error);
         lastError = error;
-        setLlmStatus(`✗ ${llmOptions.find(l => l.id === llmId)?.name} failed, trying next...`);
+        setLlmStatus(
+          `✗ ${llmOptions.find((l) => l.id === llmId)?.name} failed, trying next...`,
+        );
         continue;
       }
     }
 
     throw new Error(
-      `All LLM APIs failed. Last error: ${lastError?.message || "Unknown error"}`
+      `All LLM APIs failed. Last error: ${lastError?.message || "Unknown error"}`,
     );
   };
 
@@ -441,22 +450,22 @@ const validateQueryWithFallback = async (userQuery) => {
       // const result = await callLLMWithFallback(userInput);
 
       // ✅ STEP 1: Validate query
-const isValid = await validateQueryWithFallback(userInput);
+      const isValid = await validateQueryWithFallback(userInput);
 
-if (!isValid) {
-  const botMessage = {
-    type: "error",
-    content:
-      "⚠️ I only suggest APIs.\nTry:\n• Payment API\n• WhatsApp API\n• AI APIs",
-  };
+      if (!isValid) {
+        const botMessage = {
+          type: "error",
+          content:
+            "⚠️ I only suggest APIs.\nTry:\n• Payment API\n• WhatsApp API\n• AI APIs",
+        };
 
-  setMessages((prev) => [...prev, botMessage]);
-  setLoading(false);
-  return;
-}
+        setMessages((prev) => [...prev, botMessage]);
+        setLoading(false);
+        return;
+      }
 
-// ✅ STEP 2: Continue normally
-const result = await callLLMWithFallback(userInput);
+      // ✅ STEP 2: Continue normally
+      const result = await callLLMWithFallback(userInput);
 
       const botMessage = {
         type: "bot",
@@ -561,10 +570,7 @@ const result = await callLLMWithFallback(userInput);
         content = `"${msg.content.replace(/"/g, '""')}"`;
       } else if (type === "bot" && Array.isArray(msg.content)) {
         const apis = msg.content
-          .map(
-            (api) =>
-              `${api.api_name}: ${api.short_description}`
-          )
+          .map((api) => `${api.api_name}: ${api.short_description}`)
           .join(" | ");
         content = `"${apis.replace(/"/g, '""')}"`;
       } else if (type === "error") {
